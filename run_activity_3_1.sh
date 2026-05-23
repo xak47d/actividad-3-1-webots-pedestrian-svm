@@ -128,26 +128,42 @@ fi
 export PYTHONPATH="$WEBOTS_HOME/Contents/lib/controller/python"
 export WEBOTS_PYTHON_EXECUTABLE="$VENV_PY"
 
+# Elige un puerto libre para esta instancia de Webots. Si ya hay otra
+# instancia en 1234 (el puerto por omisión), la nuestra usaría 1235
+# pero el controlador externo seguiría conectándose a 1234 (puerto por
+# defecto), controlando la instancia equivocada. Para evitarlo,
+# elegimos un puerto libre y atamos tanto Webots como el controlador
+# externo a ese puerto vía WEBOTS_CONTROLLER_URL.
+pick_free_port() {
+  python3 - <<'PY'
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+}
+
+WEBOTS_PORT="${WEBOTS_PORT:-$(pick_free_port)}"
+echo "[run] Usando puerto Webots: $WEBOTS_PORT"
+
 if [[ $RECORD -eq 1 ]]; then
   mkdir -p "$SCRIPT_DIR/media"
   export WEBOTS_RECORD_MAX_SECONDS="${WEBOTS_RECORD_MAX_SECONDS:-30}"
   export WEBOTS_RECORD_MAIN_PATH="$SCRIPT_DIR/media/Actividad_3_1_synchronized_main.mp4"
   export WEBOTS_RECORD_CAMERA_PATH="$SCRIPT_DIR/media/Actividad_3_1_synchronized_camera.mp4"
+  # Calidad baja para evitar 'Error: 2pass curve failed to converge' del
+  # codificador libx264 con contenido casi estático.
+  export WEBOTS_RECORD_MAIN_QUALITY="${WEBOTS_RECORD_MAIN_QUALITY:-50}"
   echo "[record] Webots grabará durante ${WEBOTS_RECORD_MAX_SECONDS}s en $SCRIPT_DIR/media"
 fi
 
 echo "[run] Webots → $WORLD"
-"$WEBOTS_HOME/Contents/MacOS/webots" --mode=realtime --stdout --stderr "$WORLD" &
+"$WEBOTS_HOME/Contents/MacOS/webots" \
+  --port="$WEBOTS_PORT" \
+  --mode=realtime --stdout --stderr "$WORLD" &
 WEBOTS_PID=$!
 
-# Webots tarda unos segundos en abrir el mundo y aceptar conexiones externas.
-sleep 4
-
-CONTROLLER_DIR="$SCRIPT_DIR/SDC_webots/controllers/vehicle_controller"
-echo "[run] Controlador externo → $CONTROLLER_DIR/vehicle_controller.py"
-
-# El controlador externo termina cuando Webots cierra la simulación.
-# Si el usuario cierra Webots, mata también al controlador.
 cleanup() {
   if kill -0 "$WEBOTS_PID" 2>/dev/null; then
     kill "$WEBOTS_PID" 2>/dev/null || true
@@ -155,10 +171,28 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-cd "$CONTROLLER_DIR"
-"$VENV_PY" vehicle_controller.py
+if [[ $RECORD -eq 1 ]]; then
+  # El mundo de grabación tiene el vehicle_controller declarado como
+  # controlador INTERNO de Webots (para mantener cámara y vista 3D en
+  # sincronía). No se debe lanzar un controlador externo adicional.
+  echo "[record] Esperando a que Webots termine de grabar..."
+  wait "$WEBOTS_PID" 2>/dev/null || true
+else
+  # Webots tarda unos segundos en abrir el mundo y aceptar conexiones externas.
+  sleep 4
 
-wait "$WEBOTS_PID" 2>/dev/null || true
+  CONTROLLER_DIR="$SCRIPT_DIR/SDC_webots/controllers/vehicle_controller"
+  echo "[run] Controlador externo → $CONTROLLER_DIR/vehicle_controller.py"
+
+  # El controlador externo se ata a la instancia de Webots correcta vía
+  # WEBOTS_CONTROLLER_URL (formato tcp://host:puerto/nombre_del_robot).
+  export WEBOTS_CONTROLLER_URL="tcp://localhost:${WEBOTS_PORT}/"
+
+  cd "$CONTROLLER_DIR"
+  "$VENV_PY" vehicle_controller.py
+
+  wait "$WEBOTS_PID" 2>/dev/null || true
+fi
 
 if [[ $RECORD -eq 1 ]]; then
   echo "[record] Componiendo overlay sincronizado..."

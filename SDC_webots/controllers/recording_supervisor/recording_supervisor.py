@@ -65,4 +65,8 @@ while supervisor.step(TIME_STEP) != -1:
             if supervisor.movieFailed():
                 print("No se pudo guardar el video principal:", main_video_path)
 
+        # Le pide a Webots que cierre la aplicación al finalizar el
+        # recording. Sin esto, la GUI de Webots queda abierta y el
+        # script orquestador se queda esperando indefinidamente.
+        supervisor.simulationQuit(0)
         break

@@ -104,20 +104,33 @@ if exist "%WEBOTS_HOME%\msys64\mingw64\bin\webots.exe" (
 if "%RECORD%"=="1" (
   if not exist "%SCRIPT_DIR%media" mkdir "%SCRIPT_DIR%media"
   if "%WEBOTS_RECORD_MAX_SECONDS%"=="" set "WEBOTS_RECORD_MAX_SECONDS=30"
+  if "%WEBOTS_RECORD_MAIN_QUALITY%"=="" set "WEBOTS_RECORD_MAIN_QUALITY=50"
   set "WEBOTS_RECORD_MAIN_PATH=%SCRIPT_DIR%media\Actividad_3_1_synchronized_main.mp4"
   set "WEBOTS_RECORD_CAMERA_PATH=%SCRIPT_DIR%media\Actividad_3_1_synchronized_camera.mp4"
   echo [record] Webots grabara durante %WEBOTS_RECORD_MAX_SECONDS%s en %SCRIPT_DIR%media
 )
 
+REM Elige un puerto libre para esta instancia y ata el controlador
+REM externo a el via WEBOTS_CONTROLLER_URL.
+if "%WEBOTS_PORT%"=="" (
+  for /f %%P in ('"%VENV_PY%" -c "import socket;s=socket.socket();s.bind((''127.0.0.1'',0));print(s.getsockname()[1]);s.close()"') do set "WEBOTS_PORT=%%P"
+)
+echo [run] Usando puerto Webots: %WEBOTS_PORT%
+
 echo [run] Webots -^> %WORLD%
-start "" "%WEBOTS_EXE%" --mode=realtime --stdout --stderr "%WORLD%"
-
-timeout /t 4 /nobreak >nul
-
-echo [run] Controlador externo -^> SDC_webots\controllers\vehicle_controller\vehicle_controller.py
-pushd "%SCRIPT_DIR%SDC_webots\controllers\vehicle_controller"
-"%VENV_PY%" vehicle_controller.py
-popd
+if "%RECORD%"=="1" (
+  REM El mundo de grabacion usa el vehicle_controller INTERNO de Webots.
+  REM No se lanza controlador externo; Webots se cierra solo al terminar.
+  "%WEBOTS_EXE%" --port=%WEBOTS_PORT% --mode=realtime --stdout --stderr "%WORLD%"
+) else (
+  start "" "%WEBOTS_EXE%" --port=%WEBOTS_PORT% --mode=realtime --stdout --stderr "%WORLD%"
+  timeout /t 4 /nobreak >nul
+  set "WEBOTS_CONTROLLER_URL=tcp://localhost:%WEBOTS_PORT%/"
+  echo [run] Controlador externo -^> SDC_webots\controllers\vehicle_controller\vehicle_controller.py
+  pushd "%SCRIPT_DIR%SDC_webots\controllers\vehicle_controller"
+  "%VENV_PY%" vehicle_controller.py
+  popd
+)
 
 if "%RECORD%"=="1" (
   echo [record] Componiendo overlay sincronizado...
