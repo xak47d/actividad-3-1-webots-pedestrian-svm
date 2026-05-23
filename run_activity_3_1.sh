@@ -202,3 +202,4 @@ if [[ $RECORD -eq 1 ]]; then
     echo "[record] ffmpeg/ffprobe no encontrados. Instálalos para componer el overlay."
   fi
 fi
+
