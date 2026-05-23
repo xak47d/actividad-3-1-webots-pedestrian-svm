@@ -1,0 +1,8 @@
+.DS_Store
+.venv/
+.venv-webots/
+__pycache__/
+*.pyc
+*.avi
+media/Actividad_3_1_synchronized_main.mp4
+media/Actividad_3_1_synchronized_camera.mp4
