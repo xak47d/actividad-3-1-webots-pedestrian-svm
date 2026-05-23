@@ -35,9 +35,18 @@ height = camera.getHeight()
 # Grabación opcional de la cámara del coche para componerla después
 # sobre la vista principal sin depender de overlays de la UI de Webots.
 record_camera_path = os.getenv("WEBOTS_RECORD_CAMERA_PATH", "").strip()
+record_camera_frame_dir = os.getenv("WEBOTS_RECORD_CAMERA_FRAME_DIR", "").strip()
+record_frame_interval_text = os.getenv("WEBOTS_RECORD_FRAME_INTERVAL_STEPS", "3").strip()
 record_max_seconds_text = os.getenv("WEBOTS_RECORD_MAX_SECONDS", "").strip()
 record_max_seconds = None
 camera_video_writer = None
+camera_frame_index = 0
+
+try:
+    record_frame_interval = max(1, int(record_frame_interval_text))
+except ValueError:
+    print("WEBOTS_RECORD_FRAME_INTERVAL_STEPS debe ser entero:", record_frame_interval_text)
+    record_frame_interval = 3
 
 if record_max_seconds_text:
     try:
@@ -66,6 +75,9 @@ if record_camera_path:
     else:
         print("No se pudo iniciar la grabacion de la camara:", record_camera_path)
         camera_video_writer = None
+
+if record_camera_frame_dir:
+    os.makedirs(record_camera_frame_dir, exist_ok=True)
 
 # ============================================================
 # LIDAR
@@ -147,28 +159,42 @@ step_counter = 0
 # ============================================================
 # FUNCIÓN PARA DETECTAR PEATONES CON SVM
 # ============================================================
+# La cámara del vehículo tiene resolución 256x128 y no coincide con la
+# ventana de entrenamiento del SVM (64x128). Se aplica Sliding Window
+# Search multi-escala sobre la ROI inferior, como recomienda la actividad.
+# Referencia: https://medium.com/@ricardo.zuccolo/self-driving-cars-opencv-and-svm-machine-learning-with-scikit-learn-for-vehicle-detection-on-the-bf88860e055a
+
+SVM_WINDOW_W = 64
+SVM_WINDOW_H = 128
+SVM_STEP = 16
+SVM_SCALED_WIDTHS = (256, 384, 512)
+
+
 def detect_pedestrian_with_svm(image_bgra):
-
-    # Convertir imagen a formato BGR.
     img_bgr = cv2.cvtColor(image_bgra, cv2.COLOR_BGRA2BGR)
-
-    # Convertir a escala de grises.
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-    # Región de interés.
-    # Solo se usa la parte inferior de la imagen.
+    # ROI: parte inferior de la imagen, donde aparecen los peatones.
     roi = gray[height // 3:height, :]
 
-    # Redimensionar para que coincida con el tamaño esperado por HOG.
-    resized = cv2.resize(roi, (64, 128))
+    features_batch = []
 
-    # Extraer características HOG.
-    features = hog.compute(resized)
+    # Multi-escala: la ROI se redimensiona a varias anchuras para
+    # detectar peatones de diferente tamaño aparente (más cerca/lejos).
+    for sw in SVM_SCALED_WIDTHS:
+        if sw < SVM_WINDOW_W:
+            continue
+        resized = cv2.resize(roi, (sw, SVM_WINDOW_H))
+        for x in range(0, sw - SVM_WINDOW_W + 1, SVM_STEP):
+            window = resized[0:SVM_WINDOW_H, x:x + SVM_WINDOW_W]
+            features_batch.append(hog.compute(window).flatten())
 
-    # Predicción con el modelo SVM.
-    prediction = model.predict([features.flatten()])
+    if not features_batch:
+        return False
 
-    return prediction[0] == 1
+    # Predicción en batch — el SVM lineal evalúa todas las ventanas a la vez.
+    preds = model.predict(features_batch)
+    return bool(np.any(preds == 1))
 
 # ============================================================
 # FUNCIÓN DE SEGUIDOR DE LÍNEA CON PID
@@ -334,9 +360,13 @@ while driver.step() != -1:
         pedestrian_min_distance <= front_distance <= pedestrian_max_distance
     )
 
-    # En esta variante del mundo ya no hay barriles, por lo que se desactiva
-    # esa rama de decisión para evitar falsos positivos del SVM/LiDAR.
-    valid_barrel = False
+    # Si el LiDAR ve un obstáculo cercano pero el SVM NO lo clasifica
+    # como peatón, asumimos que es un barril (único otro tipo de obstáculo
+    # en este mundo). Esto activa la rama de barril (con intermitentes).
+    valid_barrel = (
+        obstacle_detected and
+        not pedestrian_detected
+    )
 
     # ========================================================
     # CONFIRMACIONES
@@ -492,12 +522,13 @@ while driver.step() != -1:
 
         driver.setSteeringAngle(steering_angle)
 
-    if camera_video_writer is not None:
+    if camera_video_writer is not None or record_camera_frame_dir:
         recorded_frame = cv2.cvtColor(image_bgra, cv2.COLOR_BGRA2BGR)
 
         distance_text = "inf" if not math.isfinite(front_distance) else f"{front_distance:.2f} m"
+        elapsed_seconds = step_counter * TIME_STEP / 1000.0
         overlay_lines = [
-            f"t={step_counter * TIME_STEP / 1000.0:05.2f}s",
+            f"t={elapsed_seconds:05.2f}s",
             f"modo={mode}",
             f"dist={distance_text}"
         ]
@@ -517,9 +548,17 @@ while driver.step() != -1:
                 cv2.LINE_AA
             )
 
-        camera_video_writer.write(recorded_frame)
+        if camera_video_writer is not None:
+            camera_video_writer.write(recorded_frame)
 
-        elapsed_seconds = step_counter * TIME_STEP / 1000.0
+        if record_camera_frame_dir and step_counter % record_frame_interval == 0:
+            camera_frame_index += 1
+            frame_path = os.path.join(
+                record_camera_frame_dir,
+                f"camera_{camera_frame_index:05d}_step_{step_counter:06d}_t_{elapsed_seconds:07.3f}.jpg"
+            )
+            cv2.imwrite(frame_path, recorded_frame)
+
         if record_max_seconds is not None and elapsed_seconds >= record_max_seconds:
             close_camera_video_writer()
             break

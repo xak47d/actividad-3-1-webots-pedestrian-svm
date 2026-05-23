@@ -43,6 +43,7 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/project
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/traffic/protos/HighwaySign.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/road/protos/Crossroad.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/humans/pedestrian/protos/Pedestrian.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/factory/containers/protos/OilBarrel.proto"
 
 WorldInfo {
   info [
@@ -1567,4 +1568,14 @@ Pedestrian {
     "--trajectory=46 94, 46 116"
     "--speed=6.0"
   ]
+}
+DEF BARREL OilBarrel {
+  translation 0 0 -5
+  height 0.6
+  radius 0.2
+}
+Robot {
+  name "supervisor"
+  controller "supervisor_controller"
+  supervisor TRUE
 }
