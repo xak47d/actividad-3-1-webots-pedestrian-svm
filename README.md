@@ -1,81 +1,85 @@
-# Actividad 3.1 - Webots Pedestrian Detection with SVM
+# Actividad 3.1 - Detección de Peatones en Webots con SVM
 
-This repository contains the Webots implementation and deliverables for Activity 3.1, focused on pedestrian detection with HOG + SVM and vehicle response inside the Webots city world.
+Este repositorio contiene la implementación en Webots y los entregables de la Actividad 3.1, enfocada en la detección de peatones con HOG + SVM y la respuesta del vehículo dentro del mundo de ciudad de Webots.
 
-## Contents
+## Contenido
 
 - `SDC_webots/controllers/vehicle_controller/vehicle_controller.py`
-  Main vehicle controller with PID lane following, LiDAR distance checks, HOG + SVM pedestrian detection using **multi-scale sliding-window search**, emergency braking (with hazard flashers for barrels, without for pedestrians), and optional car-camera recording.
+  Controlador principal del vehículo con seguidor de línea PID, lectura de distancia con LiDAR, detección de peatones HOG + SVM mediante **Sliding Window Search multi-escala**, frenado de emergencia (con luces intermitentes para barriles, sin intermitentes para peatones) y grabación opcional de la cámara del auto.
 - `SDC_webots/controllers/vehicle_controller/svm_pedestrian_model.pkl`
-  Trained SVM model used by the controller (HOG features, 64x128 window).
+  Modelo SVM entrenado que usa el controlador (HOG, ventana de 64x128).
 - `SDC_webots/controllers/supervisor_controller/supervisor_controller.py`
-  Supervisor that periodically spawns an oil barrel in front of the vehicle and removes it after a few steps. Provided unmodified per the activity instructions.
+  Supervisor que coloca periódicamente un barril de aceite frente al vehículo y lo retira segundos después. Provisto por el profesor y utilizado sin modificaciones, según las instrucciones de la actividad.
 - `SDC_webots/controllers/recording_supervisor/recording_supervisor.py`
-  Supervisor used only for synchronized recording of the Webots main 3D view.
+  Supervisor utilizado únicamente para la grabación sincronizada de la vista 3D principal de Webots. Llama a `simulationQuit` cuando termina la grabación para que la app de Webots se cierre limpiamente.
 - `SDC_webots/training/train_svm.py`
-  Trains the HOG + LinearSVC model. Positives are cropped from the Penn-Fudan annotation bounding boxes; negatives are random non-overlapping patches from the same images (no synthetic noise).
+  Entrena el modelo HOG + LinearSVC. Las muestras positivas se obtienen recortando los bounding boxes anotados de Penn-Fudan; las negativas son parches aleatorios que no se solapan con ningún bounding box (sin ruido sintético).
 - `SDC_webots/worlds/city_2025a_activity_3_1.wbt`
-  Activity world. Includes pedestrians, a `DEF BARREL OilBarrel` node, and a `Robot` running `supervisor_controller`. The vehicle is configured for an external controller.
+  Mundo de la actividad. Incluye peatones, un nodo `DEF BARREL OilBarrel` y un `Robot` que ejecuta `supervisor_controller`. El BmwX5 está configurado con controlador externo.
 - `SDC_webots/worlds/city_2025a_activity_3_1_recording.wbt`
-  Recording world. Same vehicle + recording supervisor run inside Webots so the main view and car camera are captured from the same simulation run.
-- `run_activity_3_1.sh` and `run_activity_3_1.cmd`
-  **All-in-one launcher**: sets up the venv, trains the SVM if needed, copies the model into the controller folder, launches Webots with the activity world, and starts the external controller.
-- `run_webots_controller.sh` and `run_webots_controller.cmd`
-  macOS/Linux and Windows helpers for running just the external controller against an already-open Webots window.
-- `capture_synchronized_video.sh` and `capture_synchronized_video.cmd`
-  macOS/Linux and Windows helpers for recording the main Webots view and the car camera at the same time (uses the recording world).
+  Mundo de grabación. El mismo vehículo y el supervisor de grabación se ejecutan dentro de Webots para que la vista principal y la cámara del auto se capturen en el mismo run de simulación.
+- `run_activity_3_1.sh` y `run_activity_3_1.cmd`
+  **Script todo-en-uno**: arma el venv, entrena el SVM si hace falta, copia el modelo al folder del controlador, abre Webots con el mundo correspondiente y lanza el controlador externo.
+- `run_webots_controller.sh` y `run_webots_controller.cmd`
+  Helpers de macOS/Linux y Windows para lanzar únicamente el controlador externo contra una instancia de Webots ya abierta.
+- `capture_synchronized_video.sh` y `capture_synchronized_video.cmd`
+  Helpers de macOS/Linux y Windows para grabar la vista principal de Webots y la cámara del auto al mismo tiempo (utilizan el mundo de grabación).
 - `compose_synchronized_overlay.py`
-  Uses `ffmpeg` and `ffprobe` to retime the Webots main movie to the car-camera timeline and create the final picture-in-picture overlay.
+  Usa `ffmpeg` y `ffprobe` para resincronizar la película principal con la línea de tiempo de la cámara y generar el overlay picture-in-picture final.
+- `update_docx.py`
+  Regenera las secciones modificables del entregable `.docx` (matriz de confusión, código actual, declaración de IA, subsección del supervisor) a partir del estado vigente del código.
 - `media/Actividad_3_1_synchronized_overlay.mp4`
-  Verified synchronized demo video.
+  Video demo sincronizado, verificado.
 - `Actividad 3.1 - Detección de Peatones con SVM.md`
-  Original activity note.
+  Nota original de la actividad.
 
-## What the controller does
+## Lo que hace el controlador
 
-The controller implements the requested perception and response pipeline:
+El controlador implementa el pipeline de percepción y respuesta solicitado:
 
-1. Captures the vehicle camera image (256x128).
-2. Runs the PID lane follower on a yellow HSV mask of the bottom of the image.
-3. Reads the front LiDAR (Sick LMS 291), restricted to a ~30 degree cone and 20 m range.
-4. Runs HOG + SVM pedestrian detection with a multi-scale sliding window over the bottom region of interest (windows are batched into a single `predict` call).
-5. Requires N consecutive confirmations before classifying an obstacle to avoid false positives.
-6. If the LiDAR sees a close obstacle AND the SVM confirms a pedestrian: emergency brake, **no hazard flashers**, wait until the obstacle clears.
-7. If the LiDAR sees a close obstacle but the SVM does **not** confirm a pedestrian: treat it as a barrel, emergency brake, **enable hazard flashers**, wait until the barrel disappears.
-8. Otherwise: cruise at the configured speed and follow the line.
-9. Optionally writes the camera feed to MP4 when `WEBOTS_RECORD_CAMERA_PATH` is defined.
+1. Captura la imagen de la cámara del vehículo (256x128).
+2. Ejecuta el seguidor de línea PID sobre una máscara HSV amarilla de la parte inferior de la imagen.
+3. Lee el LiDAR frontal (Sick LMS 291), restringido a un cono de ~30 grados y 20 m de rango.
+4. Corre la detección de peatones HOG + SVM con una ventana deslizante multi-escala sobre la región de interés inferior (las ventanas se procesan en una sola llamada a `predict`).
+5. Requiere N confirmaciones consecutivas antes de clasificar un obstáculo para evitar falsos positivos.
+6. Si el LiDAR ve un obstáculo cercano Y el SVM confirma un peatón: frenado de emergencia, **sin** intermitentes, espera hasta que el obstáculo se libere.
+7. Si el LiDAR ve un obstáculo cercano pero el SVM **no** lo confirma como peatón: se trata como barril, frenado de emergencia, **se encienden los intermitentes**, espera hasta que el barril desaparezca.
+8. En cualquier otro caso: avanza a la velocidad crucero y sigue la línea.
+9. Opcionalmente escribe el feed de cámara a MP4 cuando `WEBOTS_RECORD_CAMERA_PATH` está definido.
 
-## Requirements
+## Requisitos
 
-- Webots R2025a or compatible.
-- Python 3 with `venv`.
-- Python packages listed in `requirements_webots.txt`.
-- `ffmpeg` and `ffprobe` only if you want to regenerate the synchronized overlay video.
+- Webots R2025a o compatible.
+- Python 3 con `venv`.
+- Paquetes Python listados en `requirements_webots.txt`.
+- `ffmpeg` y `ffprobe` solo si quieres regenerar el video overlay sincronizado.
 
-## Quick start (all-in-one)
+## Inicio rápido (todo-en-uno)
 
-The simplest path is the all-in-one launcher. It creates the venv, retrains the SVM if needed, copies the model into the controller, opens Webots with the activity world, and starts the external controller:
+La ruta más simple es el launcher todo-en-uno. Crea el venv, re-entrena el SVM solo si hace falta, copia el modelo al controlador, abre Webots con el mundo de la actividad y arranca el controlador externo:
 
 ```bash
 ./run_activity_3_1.sh
 ```
 
-Useful flags:
+Banderas útiles:
 
 ```bash
-./run_activity_3_1.sh --retrain          # force SVM retraining
-./run_activity_3_1.sh --no-webots        # only prepare/train, don't open Webots
-./run_activity_3_1.sh --record           # use recording world + capture sync videos
-./run_activity_3_1.sh --world recording  # open the recording world manually
+./run_activity_3_1.sh --retrain          # fuerza el re-entrenamiento del SVM
+./run_activity_3_1.sh --no-webots        # solo prepara/entrena, no abre Webots
+./run_activity_3_1.sh --record           # usa el mundo de grabación y captura videos sincronizados
+./run_activity_3_1.sh --world recording  # abre el mundo de grabación manualmente
 ```
 
-On Windows the equivalent is `run_activity_3_1.cmd` with the same flags.
+En Windows el equivalente es `run_activity_3_1.cmd` con las mismas banderas.
 
-The Penn-Fudan dataset must be available so the training step can find positives. By default the script looks in `SDC_webots/PennFudanPed/`; override with `PENNFUDAN_DIR=/path/to/PennFudanPed`.
+El launcher selecciona automáticamente un puerto libre y ata el controlador externo a esa instancia vía `WEBOTS_CONTROLLER_URL`, de modo que se puede ejecutar incluso con otra instancia de Webots ya abierta en el puerto 1234 sin colisiones.
 
-## Manual workflow (macOS or Linux)
+El dataset Penn-Fudan debe estar disponible para que el paso de entrenamiento encuentre las muestras positivas. Por defecto el script lo busca en `SDC_webots/PennFudanPed/`; se puede sobreescribir con `PENNFUDAN_DIR=/ruta/a/PennFudanPed`.
 
-Create and activate a local environment:
+## Flujo manual (macOS o Linux)
+
+Crear y activar un entorno local:
 
 ```bash
 python3 -m venv .venv-webots
@@ -83,28 +87,28 @@ source .venv-webots/bin/activate
 pip install -r requirements_webots.txt
 ```
 
-Open the activity world in Webots:
+Abrir el mundo de la actividad en Webots:
 
 ```bash
 open SDC_webots/worlds/city_2025a_activity_3_1.wbt
 ```
 
-Then run the external controller:
+Luego correr el controlador externo:
 
 ```bash
 ./run_webots_controller.sh
 ```
 
-If Webots is installed somewhere other than `/Applications/Webots.app`, define `WEBOTS_HOME` first:
+Si Webots está instalado en una ruta distinta a `/Applications/Webots.app`, define primero `WEBOTS_HOME`:
 
 ```bash
 export WEBOTS_HOME="/Applications/Webots.app"
 ./run_webots_controller.sh
 ```
 
-## Training the SVM
+## Entrenamiento del SVM
 
-The model shipped in `SDC_webots/controllers/vehicle_controller/svm_pedestrian_model.pkl` is trained on the Penn-Fudan dataset, using bounding-box crops as positives and non-overlapping background patches as negatives. To retrain locally:
+El modelo que se distribuye en `SDC_webots/controllers/vehicle_controller/svm_pedestrian_model.pkl` está entrenado con el dataset Penn-Fudan, usando recortes de bounding boxes como positivos y parches no solapados como negativos. Para re-entrenarlo localmente:
 
 ```bash
 source .venv-webots/bin/activate
@@ -113,11 +117,11 @@ python train_svm.py
 cp svm_pedestrian_model.pkl ../controllers/vehicle_controller/svm_pedestrian_model.pkl
 ```
 
-The script prints the confusion matrix and `classification_report` used in the deliverable video. Last training run (170 images): 420 positives / 239 negatives, ~97% accuracy.
+El script imprime la matriz de confusión y el `classification_report` que se usan en el video del entregable. Último entrenamiento (170 imágenes): 420 positivos / 239 negativos, ~97% de exactitud.
 
-## Running on Windows
+## Ejecución en Windows
 
-Create and activate a local environment from Command Prompt:
+Crear y activar el entorno local desde el Símbolo del sistema:
 
 ```bat
 py -3 -m venv .venv-webots
@@ -125,64 +129,70 @@ py -3 -m venv .venv-webots
 pip install -r requirements_webots.txt
 ```
 
-Open this world in Webots:
+Abrir el mundo en Webots:
 
 ```bat
 SDC_webots\worlds\city_2025a_activity_3_1.wbt
 ```
 
-Then run:
+Luego correr:
 
 ```bat
 run_webots_controller.cmd
 ```
 
-The Windows launcher checks common Webots install paths, including `C:\Program Files\Webots`. If your installation is elsewhere, set `WEBOTS_HOME` manually:
+El launcher de Windows revisa rutas comunes de instalación de Webots, incluyendo `C:\Program Files\Webots`. Si tu instalación está en otra parte, define `WEBOTS_HOME` manualmente:
 
 ```bat
 set WEBOTS_HOME=C:\Program Files\Webots
 run_webots_controller.cmd
 ```
 
-## Recording the synchronized demo video
+## Grabación del video demo sincronizado
 
-The synchronized video must be captured from one simulation run. The recording world starts:
-
-- the vehicle controller,
-- the recording supervisor for the Webots main view,
-- and optional camera recording inside `vehicle_controller.py`.
-
-On macOS or Linux:
+La forma recomendada es usar el launcher todo-en-uno con `--record`:
 
 ```bash
-source .venv-webots/bin/activate
-./capture_synchronized_video.sh
-python compose_synchronized_overlay.py
+./run_activity_3_1.sh --record
 ```
 
-On Windows:
+Esto, en una sola ejecución:
 
-```bat
-.venv-webots\Scripts\activate
-capture_synchronized_video.cmd
-python compose_synchronized_overlay.py
-```
+- Abre Webots con el mundo de grabación (que ejecuta el `vehicle_controller` como controlador INTERNO de Webots para mantener sincronizadas la cámara y la vista 3D).
+- Graba simultáneamente la vista principal y el feed de la cámara del auto.
+- Cierra Webots automáticamente cuando termina la grabación (`recording_supervisor` llama a `simulationQuit`).
+- Compone el overlay picture-in-picture con `ffmpeg` y `ffprobe`.
 
-The raw synchronized streams are written to:
+Las variables de entorno que se pueden ajustar antes del `--record`:
+
+- `WEBOTS_RECORD_MAX_SECONDS` (default `30`): duración de la grabación.
+- `WEBOTS_RECORD_MAIN_QUALITY` (default `50`): calidad de la película principal. Se baja respecto al valor por defecto de Webots para evitar el error `libx264: 2pass curve failed to converge` en escenas casi estáticas.
+
+Los streams sincronizados se escriben en:
 
 - `media/Actividad_3_1_synchronized_main.mp4`
 - `media/Actividad_3_1_synchronized_camera.mp4`
 
-The final picture-in-picture video is written to:
+El video picture-in-picture final se escribe en:
 
 - `media/Actividad_3_1_synchronized_overlay.mp4`
 
-If Webots remains open after `Video creation finished`, close the Webots window normally. The important part is that both streams have already been written before composition.
+Alternativamente, los helpers heredados `capture_synchronized_video.sh` / `.cmd` siguen funcionando si prefieres invocar las piezas por separado y luego correr `python compose_synchronized_overlay.py` a mano.
 
-## Notes
+## Actualización del entregable `.docx`
 
-- The Penn-Fudan training image dataset is not included to keep the repository small. The trained `svm_pedestrian_model.pkl` required to run the controller is included.
-- `scikit-learn==1.7.2` is pinned because the bundled model was trained with that version.
-- `compose_synchronized_overlay.py` compensates for Webots writing the main movie at 25 FPS while the vehicle camera records at the 32 ms controller timestep.
-- The sliding-window detector evaluates ~63 candidate windows per frame across 3 scales; it batches them into a single `LinearSVC.predict` call to keep the per-step cost low at the 32 ms timestep.
-- Pedestrians vs. barrels are disambiguated using the SVM output on top of LiDAR proximity: SVM-positive obstacles trigger a no-hazard pedestrian stop, SVM-negative obstacles trigger the hazard-flasher barrel branch.
+El entregable principal (`Actividad_3.1_Detección_de_Peatones_Equipo19.docx`) vive fuera del repositorio (en la carpeta de iCloud de los entregables), pero el script `update_docx.py` lo regenera de forma idempotente a partir del estado vigente del código:
+
+```bash
+./.venv-webots/bin/python update_docx.py
+```
+
+Re-emplaza el bloque de código del controlador, inyecta la matriz de confusión real, actualiza la descripción de la sección SVM (Sliding Window + Penn-Fudan), añade la subsección del supervisor de barriles y la declaración obligatoria de uso de IA, y deja el placeholder del enlace de YouTube. Se guarda un backup `*_backup_pre_update.docx` junto al original antes de cualquier modificación.
+
+## Notas
+
+- El dataset de imágenes de entrenamiento Penn-Fudan no se incluye para mantener el repositorio pequeño. El `svm_pedestrian_model.pkl` ya entrenado, necesario para correr el controlador, sí está incluido.
+- `scikit-learn==1.7.2` está pineado porque el modelo distribuido se entrenó con esa versión.
+- `compose_synchronized_overlay.py` compensa el hecho de que Webots escribe la película principal a 25 FPS mientras la cámara del vehículo graba al timestep del controlador (32 ms).
+- El detector con ventana deslizante evalúa ~63 ventanas candidatas por frame en 3 escalas y las procesa en una sola llamada a `LinearSVC.predict` para mantener bajo el costo por paso del controlador (32 ms).
+- La distinción entre peatón y barril se hace combinando la salida del SVM con la proximidad del LiDAR: obstáculo cercano + SVM positivo = peatón (sin intermitentes); obstáculo cercano + SVM negativo = barril (con intermitentes).
